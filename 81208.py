@@ -128,12 +128,12 @@ def procesar_ficheroMP3(fichero):
 def procesar_entrada(entrada):
 	"""Busca en youtube la cancion indicada por el usuario con el formato TITULO:AUTOR o TITULO:AUTOR:ALBUM"""
 	resultado = []
+	#print "procesar_entrada",entrada,type(entrada) #debug
 	if entrada.count(":") not in (1,2): 
 		print "Formato incorrecto de entrada:", entrada
 	else:
-		for campo in entrada.split(":"):
-			resultado.append(campo)
-	return resultado 
+		resultado = [entrada.split(":")]
+	return resultado
 
 procesamientos = [procesar_directorio,procesar_ficheroMP3,procesar_entrada]
 procesamiento = procesar_directorio
@@ -142,6 +142,7 @@ def construye_busqueda(entrada):
 	"""YouTubeQuery"""
 	#TODO: Aqui se podria hacer un refinamiento de la busqueda
 	#      quizas al incluir el ALBUM en la busqueda estamos eliminando resultados validos
+	#print "construye_busqueda:",entrada #debug
 	if entrada == []: raise Exception
 	busqueda = gdata.youtube.service.YouTubeVideoQuery()
 
