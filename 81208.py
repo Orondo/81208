@@ -6,7 +6,9 @@
 import sys
 import getopt
 import os
-import string 
+import string
+from Queue import Queue
+from threading import Thread
 
 #estos son los modulos no estandar
 try:
@@ -35,6 +37,9 @@ Uso:
 
 	python 81208.py directorioMP3
 	Escaneará directorioMP3 e imprimirá el enlace a YouTube de todos los archivos MP3.
+
+	python 81208.py -s [enlace|busqueda] directorioMP3 
+	Con el argumento "enlace" (por defecto) imprime unicamente el enlace a YouTube, con "busqueda" imprime los terminos de la busqueda en YouTube, separados por comas, para concatenarlo con otro programa y asociar videoclip y cancion
 
 	python 81208.py -u "Titulo de la canción":Autor "Otra canción":"Otro autor":Álbum
 	Permite al usuario buscar en YouTube el videoclip sin tener el archivo MP3
@@ -92,7 +97,11 @@ def estrategia_simple(feed):
 		
 def estrategia_youtube(feed):
 	"""Devuelve el primer resultado encontrado por YouTube"""
-	return feed.entry[0].media.player.url
+	#asocio los datos del MP3 con el feed que devuelvo, para poder mostrarlos en la salida
+	#este comportamiento debe darse en todas las estrategias
+	resultado = feed.entry[0]
+	resultado.datosMP3 = feed.datosMP3
+	return resultado
 
 estrategias = {"simple":estrategia_simple,"youtube":estrategia_youtube} #si quieres definir una nueva estrategia añadela aqui y define la funcion
 estrategia = estrategia_youtube #establece el comportamiento por defecto del script
@@ -103,7 +112,6 @@ def procesar_directorio(directorio):
 	resultado = []
 	try:
 		for fichero in os.listdir(directorio):
-			#print directorio + os.sep + fichero #debug
 			#print procesar_ficheroMP3(directorio + os.sep + fichero) #debug
 			resultado.append(procesar_ficheroMP3(directorio + os.sep + fichero))
 	except OSError,err:
@@ -135,8 +143,53 @@ def procesar_entrada(entrada):
 		resultado = [entrada.split(":")]
 	return resultado
 
+def ejecutarbusquedayprocesar():# solucion guarrilla para multihilo
+
+	yt = gdata.youtube.service.YouTubeService()
+
+	while True:
+		try:
+			busqueda = busquedas.get()
+		except:
+			continue #se produce un error raro al finalizar el script, con esto lo evito #debug
+
+		feeds = []
+		feeds.append(yt.YouTubeQuery(busqueda)) #aqui viene todo el bacalao con youtube	
+		feeds[-1].datosMP3 = busqueda.datosMP3 #chapuza para asociar la busqueda al feed
+
+		#compruebo ahora el parametro para evitar el procesamiento 
+		#no se le aplica el formato de salida
+		if entradas != -1:
+			for feed in feeds:
+				if entradas >= len(feed.entry) or entradas == 0:
+					for entrada in feed.entry:
+						print entrada.media.player.url
+				else:
+					for entrada in range(0,entradas):
+						print feed.entry[entrada].media.player.url
+		#finalmente el procesamiento
+		for feed in feeds:
+			try:
+				formato_salida(estrategia(feed))
+			except:
+				pass #guarrada provisional
+		busquedas.task_done()
+
+
 procesamientos = [procesar_directorio,procesar_ficheroMP3,procesar_entrada]
 procesamiento = procesar_directorio
+
+
+def salida_busquedayenlace(feed):
+	print "%s,%s" % (string.join(feed.datosMP3,sep=","),feed.media.player.url) #debug
+
+def salida_enlace(feed):
+	print feed.media.player.url
+
+salidas = {"enlace":salida_enlace,"busqueda":salida_busquedayenlace}
+formato_salida = salida_enlace
+
+busquedas = Queue() #cola de busquedas global
 
 def construye_busqueda(entrada):
 	"""YouTubeQuery"""
@@ -153,12 +206,10 @@ def construye_busqueda(entrada):
 	#print busqueda #debug
 	return busqueda
 
-def muestra_salida(): pass #debug ya veremos
-
 if __name__ == "__main__":
 
 	try:
-		opciones,argumentos = getopt.getopt(sys.argv[1:],'t:e:ufh')
+		opciones,argumentos = getopt.getopt(sys.argv[1:],'t:e:s:ufh')
 	except getopt.GetoptError, err:
 		print str(err)
 		uso()
@@ -169,6 +220,12 @@ if __name__ == "__main__":
 	entradas = -1 #inicializco el numero de entradas que se mostraran con la opcion -t
 
 	for opcion in opciones:
+		if "-s" in opcion[0]:
+			try:
+				formato_salida = salidas[opcion[1]]
+			except KeyError,err:
+				print "El formato de salida %s no existe." % err
+				sys.exit(2)
 		if "-e" in opcion[0]:
 			try:
 				estrategia = estrategias[opcion[1]]
@@ -209,36 +266,17 @@ if __name__ == "__main__":
 	#resultados = list(set(resultados))
 	#print "resultados despues",resultados #debug
 
-	busquedas = []
+	
+	hilodebusquedas = Thread(target = ejecutarbusquedayprocesar)
+	hilodebusquedas.setDaemon(True)
+	hilodebusquedas.start()
+
 	for resultado in resultados:
 		try:
-			busquedas.append(construye_busqueda(resultado)) #gestiona todas las busquedas
+			busquedas.put(construye_busqueda(resultado)) #gestiona todas las busquedas
 		except Exception: 	
 			pass
 
-	yt = gdata.youtube.service.YouTubeService()
-	feeds = []
-	for busqueda in busquedas:
-		#print busqueda #debug
-		feeds.append(yt.YouTubeQuery(busqueda)) #aqui viene todo el bacalao con youtube	
-		feeds[-1].datosMP3 = busqueda.datosMP3 #chapuza para asociar la busqueda al feed
-	
-	#compruebo ahora el parametro para evitar el procesamiento 
-	if entradas != -1:
-		for feed in feeds:
-			if entradas >= len(feed.entry) or entradas == 0:
-				for entrada in feed.entry:
-					print entrada.media.player.url
-			else:
-				for entrada in range(0,entradas):
-					print feed.entry[entrada].media.player.url
-
-		sys.exit(0)
-
-	#finalmente el procesamiento
-	for feed in feeds:
-		try:
-			print estrategia(feed)
-		except:
-			pass #guarrada provisional
+	busquedas.join()
+	sys.exit(0)
 
